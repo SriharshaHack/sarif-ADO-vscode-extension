@@ -110,6 +110,7 @@ export class UriRebaser {
 
     private extensionName = 'sarif-viewer'
     private trustedSourceSitesConfigSection = 'trustedSourceSites';
+    private ADOPATToken = '';
     private trustedSites = workspace.getConfiguration(this.extensionName).get<string[]>(this.trustedSourceSitesConfigSection, []);
     private activeInfoMessages = new Set<string>() // Prevent repeat message animations when arrowing through many results with the same uri.
     public async translateArtifactToLocal(artifactUri: string, uriBase: string | undefined, versionControlProvenance?: VersionControlDetails[]): Promise<Uri | undefined> { // Retval is validated.
@@ -203,16 +204,29 @@ export class UriRebaser {
 
         let validatedUri = await validateUri();
         if (!validatedUri && !this.activeInfoMessages.has(artifactUri)) {
-            // download from internet by changeset
+            if(this.ADOPATToken.length === 0){
+                await window.showInputBox({
+                placeHolder: "PAT Token",
+                prompt: "Enter ADO PAT token",
+                password: true
+              }).then((value) => this.ADOPATToken = value!);
+            }
+
+                // download from internet by changeset
             if (versionControlProvenance !== undefined) {
-                const url = new URL(`${versionControlProvenance[0].repositoryUri}/${versionControlProvenance[0].revisionId}/${artifactUri.startsWith('file://') ? artifactUri.substring(7) : artifactUri}`);
+                var repoUri = versionControlProvenance[0].repositoryUri;
+                
+                if(!repoUri.includes("@"))
+                    repoUri = repoUri.replace("https://",`https://anyuser:${this.ADOPATToken}@`); 
+                
+                    const url = new URL(`${repoUri.replace("_git","_apis/git/repositories").replace(/\/$/, "")+"/items/"}?path=${artifactUri.startsWith('file://') ? artifactUri.substring(7) : artifactUri}`);
                 if (url.hostname === 'github.com') {
                     url.hostname = 'raw.githubusercontent.com';
                 }
 
                 // check for path traversal
                 const root = os.tmpdir().endsWith(path.sep) ? os.tmpdir() : `${os.tmpdir()}${path.sep}`;
-                const fileName = path.join(root, url.pathname).normalize();
+                const fileName = path.join(root, url.pathname + artifactUri.split('/').pop()).normalize();//+artifactUri.split('.').pop();
                 if (!fileName.startsWith(root))
                     return undefined;
 
@@ -228,7 +242,7 @@ export class UriRebaser {
                     if (!this.trustedSites.includes(url.hostname)) {
                         this.activeInfoMessages.add(artifactUri);
                         choice = await window.showInformationMessage(
-                            `Do you want to download the source file from this location?\n${url}`,
+                            `Do you want to download the source file from this location?\n${url.toString().replace(this.ADOPATToken,"****")}`,
                             'Yes',
                             'No',
                             alwaysMsg
